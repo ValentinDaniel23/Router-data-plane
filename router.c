@@ -146,10 +146,16 @@ void send_ICMP(char *packet, size_t len, int interface, uint8_t type)
 	icmp_hdr->checksum = 0;
 	icmp_hdr->checksum = htons(checksum((uint16_t *) icmp_hdr, sizeof(struct icmphdr)));
 
+	struct route_table_entry *best_route = get_best_route(ip_hdr->saddr);
+	if (best_route == NULL) {
+		printf("Pachet corupt\n");
+		return;
+	}
+
 	ip_hdr->ttl = 64;
 	ip_hdr->protocol = protocolICMP;
 	ip_hdr->daddr = ip_hdr->saddr;
-	ip_hdr->saddr = inet_addr(get_interface_ip(interface));
+	ip_hdr->saddr = inet_addr(get_interface_ip(best_route->interface));
 	ip_hdr->check = 0;
 	ip_hdr->check = htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)));
 
@@ -159,7 +165,7 @@ void send_ICMP(char *packet, size_t len, int interface, uint8_t type)
 		eth_hdr->ether_shost[i] = aux;
 	}
 
-	send_to_link(interface, packet, len);
+	send_to_link(best_route->interface, packet, len);
 }
 
 int check_Cache(char* packet, size_t len, struct route_table_entry* best_route)
@@ -232,15 +238,15 @@ void ARP_type(char *buf, size_t len, int interface)
 	char *packet = NULL;
 
 	if (arp_hdr->op == htons(opRequest)) {
+		struct route_table_entry *best_route = get_best_route(arp_hdr->spa);
 
 		uint8_t sha[ETH_ALEN], tha[ETH_ALEN];
 		memcpy(tha, arp_hdr->sha, ETH_ALEN);
-		get_interface_mac(interface, sha);
+		get_interface_mac(best_route->interface, sha);
 
 		packet = create_Arp(opReply, arp_hdr->tpa, sha, arp_hdr->spa, tha);
-		// struct route_table_entry *best_route = get_best_route(arp_hdr->spa);
 
-		send_to_link(interface, packet, arp_len);
+		send_to_link(best_route->interface, packet, arp_len);
 		return;
 	}
 	if (arp_hdr->op == htons(opReply)) {
@@ -255,7 +261,7 @@ void ARP_type(char *buf, size_t len, int interface)
 
 			if (ntohl(Info->rtable_entry->next_hop) == ntohl(arp_hdr->spa)) {
 				memcpy(((p_ethhdr) Info->buf)->ether_dhost, arp_hdr->sha, ETH_ALEN);
-				get_interface_mac(interface, ((p_ethhdr) Info->buf)->ether_shost);
+				get_interface_mac(Info->rtable_entry->interface, ((p_ethhdr) Info->buf)->ether_shost);
 
 				send_to_link(Info->rtable_entry->interface, Info->buf, Info->len);
 				packets_removed++;
@@ -292,7 +298,7 @@ int main(int argc, char *argv[])
 	for (int i=0; i<rtable_len; i++) {
 		insert(root, ntohl(rtable[i].prefix), __builtin_popcount(rtable[i].mask), &rtable[i]);
 	}
-
+	
 	while (1) {
 		int interface;
 		size_t len;
